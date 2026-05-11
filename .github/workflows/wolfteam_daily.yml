@@ -31,27 +31,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests gspread google-auth
 
-      - name: Export env from APP_SECRETS (Wolfteam + Sheets)
-        env:
-          APP_SECRETS: ${{ secrets.APP_SECRETS }}
-        run: |
-          python - <<'PY'
-          import os, json, sys
-          raw = os.environ.get("APP_SECRETS")
-          if not raw: sys.exit(0)
-          j = json.loads(raw)
-          wolf  = j["zendesk"]["wolfteam"]
-          slack = (j.get("slack",{}).get("webhooks",{}) or {}).get("wolfteam","")
-          creds = j.get("GOOGLE_SHEETS_CREDENTIALS", {})
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f'ZENDESK_SUBDOMAIN={wolf["subdomain"]}\n')
-              f.write(f'ZENDESK_EMAIL_TOKEN={wolf["email_token"]}\n')
-              f.write(f'ZENDESK_API_TOKEN={wolf["api_token"]}\n')
-              if slack: f.write(f'SLACK_WEBHOOK_URL={slack}\n')
-              if creds: f.write(f'GOOGLE_CREDENTIALS_JSON={json.dumps(creds)}\n')
-          PY
-
       - name: Run reporter (Wolfteam Daily)
         env:
           PYTHONUNBUFFERED: "1"
+          ZENDESK_SUBDOMAIN: ${{ secrets.ZENDESK_WOLF_SUBDOMAIN }}
+          ZENDESK_EMAIL_TOKEN: ${{ secrets.ZENDESK_WOLF_EMAIL_TOKEN }}
+          ZENDESK_API_TOKEN: ${{ secrets.ZENDESK_WOLF_API_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_WOLFTEAM }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
         run: python -u -m zendesk_reports.reporter_wolfteam
