@@ -3,8 +3,97 @@ import importlib
 import streamlit as st
 
 st.set_page_config(page_title="All-in Private Control Center", layout="wide")
+
+# ─────────────────────────────────────────────
+# 🔒 YÖNETİCİ GİRİŞİ
+# ─────────────────────────────────────────────
+def check_login():
+    """Session state üzerinden şifre kontrolü yapar."""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return True
+
+    # ── Login UI ──────────────────────────────
+    st.markdown("""
+    <style>
+    /* Arka plan */
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+    }
+    /* Merkez kart */
+    .login-card {
+        max-width: 420px;
+        margin: 10vh auto 0 auto;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 20px;
+        padding: 48px 40px 40px 40px;
+        backdrop-filter: blur(16px);
+        box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+        text-align: center;
+    }
+    .login-card h1 { color: #fff; font-size: 1.7rem; margin-bottom: 4px; }
+    .login-card p  { color: #aaa; font-size: 0.9rem; margin-bottom: 32px; }
+    /* Hata mesajı */
+    .login-error {
+        background: rgba(255,80,80,0.15);
+        border: 1px solid rgba(255,80,80,0.4);
+        border-radius: 10px;
+        padding: 10px 16px;
+        color: #ff6b6b;
+        font-size: 0.88rem;
+        margin-top: 14px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        st.markdown("""
+        <div class="login-card">
+            <h1>🔐 All-in Private</h1>
+            <p>Control Center — Yönetici Girişi</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.form("login_form", clear_on_submit=True):
+            password = st.text_input(
+                "Yönetici Şifresi",
+                type="password",
+                placeholder="••••••••••",
+                label_visibility="visible"
+            )
+            submitted = st.form_submit_button("🔓 Giriş Yap", use_container_width=True)
+
+        if submitted:
+            correct = st.secrets.get("ADMIN_PASSWORD", "")
+            if password == correct:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı şifre. Tekrar deneyin.")
+
+    return False
+
+# ─────────────────────────────────────────────
+# ANA UYGULAMA
+# ─────────────────────────────────────────────
+if not check_login():
+    st.stop()
+
+# Buraya geldiyse kullanıcı giriş yapmış demektir ✅
 st.title("🧭 All-in Private — Control Center")
 st.caption("Discord • Translation • Saat/Sheets • Zendesk • Slack")
+
+# Çıkış butonu (sağ üst)
+with st.sidebar:
+    st.markdown("### 👤 Yönetici")
+    st.success("✅ Giriş yapıldı")
+    if st.button("🚪 Çıkış Yap", use_container_width=True):
+        st.session_state.authenticated = False
+        st.rerun()
 
 def render_module(module_name: str):
     """
