@@ -1,5 +1,6 @@
 # Streamlit
 streamlit==1.38.0
+extra-streamlit-components>=0.1.60
 
 # Ortak
 pandas>=2.2.2
