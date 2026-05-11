@@ -1,0 +1,226 @@
+name: Telegram Alarm on workflow failure
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "Wolfteam Zendesk Report (Daily)"
+      - "Wolfteam Zendesk Report (Weekly)"
+      - "Wolfteam Zendesk Report (Monthly)"
+      - "Zula PC Zendesk Report (Daily)"
+      - "Zula PC Zendesk Report (Weekly)"
+      - "Zula PC Zendesk Report (Monthly)"
+      - "Zula Strike Zendesk Report (Daily)"
+      - "Zula Strike Zendesk Report (Weekly)"
+      - "Zula Strike Zendesk Report (Monthly)"
+    types:
+      - completed
+
+permissions:
+  actions: read
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+jobs:
+  # --------------------------------------------------------
+  # 1) Elle çalıştırıldığında (workflow_dispatch) çalışan job
+  #    Telegram'a "sistem kaydınız tamamlandı" tarzı kart gönderir.
+  # --------------------------------------------------------
+  setup-telegram:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Telegram'a kayıt başarılı mesajı gönder
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }} # fallback
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          NOW="$(date '+%d %B %Y %H:%M:%S %Z')"
+          RECIPIENTS="${TELEGRAM_CHAT_IDS:-$TELEGRAM_CHAT_ID}"
+
+          read -r -d '' MSG << EOF || true
+          📡 GitHub Actions Alarm Sistemi
+
+          🕓 $NOW
+          ✅ AKTİF | Repo: $REPO
+
+          Bu bot, izlenen workflow'larda SUCCESS dışındaki tüm sonuçları (failure, cancelled, timed_out, skipped, neutral, action_required) Telegram üzerinden bildirecek. 🔔
+
+          Bu mesaj bir test / kayıt bildirimidir.
+          İstersen bir rapor workflow'unu bilerek fail edip gerçek alarmı test edebilirsin.
+
+          ▶ Şu anki konfigürasyon run'ı:
+          $RUN_URL
+          EOF
+
+          IFS=',' read -ra CHAT_IDS <<< "$RECIPIENTS"
+          for RAW_ID in "${CHAT_IDS[@]}"; do
+            CHAT_ID_TRIMMED="$(echo "$RAW_ID" | xargs)"
+            [ -z "$CHAT_ID_TRIMMED" ] && continue
+
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${CHAT_ID_TRIMMED}" \
+              --data-urlencode text="$MSG" \
+              > /dev/null
+          done
+
+  # --------------------------------------------------------
+  # 2) İzlenen workflow'lardan biri tamamlandığında,
+  #    sonucu success DEĞİLSE çalışan asıl alarm job'u
+  # --------------------------------------------------------
+  notify-on-failure:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Hatalı job ve step'leri bul + logları analiz et
+        id: error_ctx
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOBS_URL: ${{ github.event.workflow_run.jobs_url }}
+          LOGS_URL: ${{ github.event.workflow_run.logs_url }}
+        run: |
+          set -e
+
+          # Hatalı job ve step'leri al
+          resp=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" "$JOBS_URL")
+
+          failing_job=$(echo "$resp" | jq -r '
+            .jobs[]
+            | select(.conclusion == "failure")
+            | .name
+            ' | head -n 1)
+
+          if [ -z "$failing_job" ] || [ "$failing_job" = "null" ]; then
+            failing_job="(Hatalı job bulunamadı - run iptal edilmiş, timeout olmuş veya genel bir hata olabilir)"
+          fi
+
+          failing_steps=$(echo "$resp" | jq -r '
+            .jobs[]
+            | select(.conclusion == "failure")
+            | .steps[]
+            | select(.conclusion == "failure")
+            | "- " + .name
+            ')
+
+          if [ -z "$failing_steps" ]; then
+            failing_steps="(Hatalı step bulunamadı - job başarısız ama step işaretlenmemiş olabilir)"
+          fi
+
+          # Log arşivini indirip son satırlardan hata özeti çıkar
+          tmpdir=$(mktemp -d)
+          cd "$tmpdir"
+          curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$LOGS_URL" -o logs.zip || true
+
+          if [ -f logs.zip ]; then
+            unzip -q logs.zip || true
+
+            # Son satırlardan bir kuyruk al, ANSI renk kodlarını temizle
+            raw_tail=$(tail -n 120 ./*/* 2>/dev/null || true)
+            clean_tail=$(printf "%s" "$raw_tail" | sed -E 's/\x1b\[[0-9;]*m//g')
+
+            # "error/exception/traceback/failed" içeren satırlara öncelik ver
+            error_snippet=$(printf "%s" "$clean_tail" | grep -Ei 'error|exception|traceback|failed' | tail -n 40 || true)
+            if [ -z "$error_snippet" ]; then
+              error_snippet=$(printf "%s" "$clean_tail" | tail -n 40 || true)
+            fi
+          else
+            error_snippet="Log arşivi alınamadı (logs.zip indirilemedi)."
+          fi
+
+          # Çok uzamasın
+          error_snippet=$(printf "%s" "$error_snippet" | tail -n 40)
+
+          advice="Genel hata: Loglardaki mesajı inceleyip eksik kütüphane, yanlış ortam değişkeni veya erişim (permission/token) problemi olup olmadığını kontrol et."
+
+          if echo "$error_snippet" | grep -q "ModuleNotFoundError"; then
+            advice="Eksik Python kütüphanesi: Hata mesajındaki modül adını alıp ilgili paketi requirements/pip install kısmına eklemelisin."
+          elif echo "$error_snippet" | grep -qi "No module named"; then
+            advice="Python modülü bulunamadı: Sanal ortamda (venv) yüklü mü ve workflow içinde doğru paketi pip ile kuruyor musun, kontrol et."
+          elif echo "$error_snippet" | grep -qi "No such file or directory"; then
+            advice="Dosya/klasör yolu hatalı: Kullanılan relatif path'ler, çalışma dizini (working-directory) ve dosyanın gerçekten repoda olup olmadığına bak."
+          elif echo "$error_snippet" | grep -qi "Permission denied"; then
+            advice="Yetki sorunu: İlgili dosya/dizin izinlerini (chmod) veya GitHub Token / API key yetkilerini (scope) gözden geçir."
+          elif echo "$error_snippet" | grep -qi "timed out\|timeout"; then
+            advice="Zaman aşımı: Dış servise erişimde gecikme olabilir. Timeout süresini artırmayı veya yeniden deneme (retry/backoff) mekanizması eklemeyi düşün."
+          elif echo "$error_snippet" | grep -qi "401\|403"; then
+            advice="401/403 yetki hatası: API anahtarı, OAuth token veya GitHub/GCP vs. kimlik bilgileri yanlış ya da yetkisiz. İlgili secrets'ları ve erişim yetkilerini kontrol et."
+          elif echo "$error_snippet" | grep -qi "429"; then
+            advice="429 rate limit: Çok sık istek atıyorsun. İstek hızını düşür veya beklemeli/retry'li bir mekanizma ekle."
+          elif echo "$error_snippet" | grep -qi "502\|503\|504"; then
+            advice="Dış servis geçici olarak ulaşılamıyor (5xx): Muhtemelen karşı serviste sorun var. Bir süre sonra tekrar dene veya otomatik retry/backoff ekle."
+          elif echo "$error_snippet" | grep -qi "Exit code"; then
+            advice="İşlem non-zero exit code ile bitti: Son komutun çıktısını incele; script içinde yakalanmamış bir hata veya return code olabilir."
+          fi
+
+          {
+            echo "failing_job<<EOF"
+            echo "$failing_job"
+            echo "EOF"
+            echo "failing_steps<<EOF"
+            echo "$failing_steps"
+            echo "EOF"
+            echo "error_snippet<<EOF"
+            echo "$error_snippet"
+            echo "EOF"
+            echo "advice_tr<<EOF"
+            echo "$advice"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Telegram alarm gönder
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }} # fallback
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_URL: ${{ github.event.workflow_run.html_url }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
+          FAILING_JOB: ${{ steps.error_ctx.outputs.failing_job }}
+          FAILING_STEPS: ${{ steps.error_ctx.outputs.failing_steps }}
+          ERROR_SNIPPET: ${{ steps.error_ctx.outputs.error_snippet }}
+          ADVICE_TR: ${{ steps.error_ctx.outputs.advice_tr }}
+        run: |
+          RECIPIENTS="${TELEGRAM_CHAT_IDS:-$TELEGRAM_CHAT_ID}"
+          NOW="$(date '+%d %B %Y %H:%M:%S %Z')"
+          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+
+          read -r -d '' TEXT << EOF || true
+          🔔 GitHub Actions Durumu
+
+          🕓 $NOW
+          ❌ $CONCLUSION | $WORKFLOW_NAME
+
+          📦 Repo: $REPO
+          🌿 Branch: $BRANCH
+
+          💣 Hatalı Job:
+          $FAILING_JOB
+
+          🧩 Hatalı Step(ler):
+          $FAILING_STEPS
+
+          🩺 Özet & Çözüm Önerisi (TR):
+          $ADVICE_TR
+
+          📜 Hata Çıktısı (son satırlar):
+          $ERROR_SNIPPET
+
+          🔗 Detaylı loglar / yeniden deneme:
+          $WORKFLOW_URL
+          EOF
+
+          IFS=',' read -ra CHAT_IDS <<< "$RECIPIENTS"
+          for RAW_ID in "${CHAT_IDS[@]}"; do
+            CHAT_ID_TRIMMED="$(echo "$RAW_ID" | xargs)"
+            [ -z "$CHAT_ID_TRIMMED" ] && continue
+
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${CHAT_ID_TRIMMED}" \
+              --data-urlencode text="$TEXT" \
+              > /dev/null
+          done

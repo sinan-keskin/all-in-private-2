@@ -1,0 +1,24 @@
+# Streamlit
+streamlit==1.38.0
+
+# Ortak
+pandas>=2.2.2
+requests>=2.32.3
+python-dotenv>=1.0.1
+
+# Translation
+openpyxl>=3.1.2
+deep-translator
+translate
+
+# Saat/Sheets
+gspread
+oauth2client
+google-play-scraper
+
+# Helpcenter
+streamlit-quill==0.0.3
+
+# Slack
+slack_sdk==3.33.1
+pytz==2024.2

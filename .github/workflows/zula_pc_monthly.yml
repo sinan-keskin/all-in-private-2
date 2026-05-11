@@ -1,0 +1,54 @@
+name: Zula PC Zendesk Report (Monthly)
+
+on:
+  schedule:
+    - cron: "10 3 1 * *"  # Ayın 1'i 03:10 UTC = TR 06:10
+  workflow_dispatch:
+
+concurrency:
+  group: zula-pc-zendesk-reports
+  cancel-in-progress: false
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      REPORT_TYPE: "MONTHLY"
+      REPORT_TZ_OFFSET_HOURS: "3"
+      ZULA_BRAND_ID: ${{ secrets.ZULA_BRAND_ID }}
+      ZULA_SHEET_ID: ${{ secrets.ZULA_SHEET_ID }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+      ZENDESK_REQS_PER_MIN: "6"
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10.13"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests gspread google-auth
+      - name: Export env from APP_SECRETS (Zula PC + Sheets)
+        env:
+          APP_SECRETS: ${{ secrets.APP_SECRETS }}
+        run: |
+          python - <<'PY'
+          import os,json,sys
+          raw=os.environ.get("APP_SECRETS"); 
+          if not raw: sys.exit(0)
+          j=json.loads(raw); z=j["zendesk"]["zula"]
+          slack=(j.get("slack",{}).get("webhooks",{}) or {}).get("zula_pc","")
+          creds=j.get("GOOGLE_SHEETS_CREDENTIALS",{})
+          with open(os.environ["GITHUB_ENV"],"a") as f:
+              f.write(f'ZENDESK_SUBDOMAIN={z["subdomain"]}\n')
+              f.write(f'ZENDESK_EMAIL_TOKEN={z["email_token"]}\n')
+              f.write(f'ZENDESK_API_TOKEN={z["api_token"]}\n')
+              if z.get("brand_pc_id"): f.write(f'ZULA_BRAND_ID={z["brand_pc_id"]}\n')
+              if slack: f.write(f'SLACK_WEBHOOK_URL={slack}\n')
+              if creds: f.write(f'GOOGLE_CREDENTIALS_JSON={json.dumps(creds)}\n')
+          PY
+      - name: Run reporter (Zula PC Monthly)
+        env: { PYTHONUNBUFFERED: "1" }
+        run: python -u -m zendesk_reports.reporter_zula_pc
