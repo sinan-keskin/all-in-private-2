@@ -111,12 +111,29 @@ def _time_clause(ts1: int, ts2: int, field: str) -> str:
     s, e = _utc_iso(ts1), _utc_iso(ts2)
     return f"{field}>={s} {field}<={e}"
 
-def _search_once(subdomain: str, headers: Dict[str, str], q: str, page: int = 1, per_page: int = 100) -> Dict:
+def _search_once(
+    subdomain: str,
+    headers: Dict[str, str],
+    q: str,
+    page: int = 1,
+    per_page: int = 50
+) -> Dict:
+
     url = f"https://{subdomain}.zendesk.com/api/v2/search.json"
-    params = {"query": q, "page": page, "per_page": per_page}
+
+    params = {
+        "query": q,
+        "page": page,
+        "per_page": per_page,
+    }
+
     r = _req("GET", url, headers, params=params)
+
     if r.status_code != 200:
-        raise RuntimeError(f"Search API hata: {r.status_code} — {r.text[:200]}")
+        raise RuntimeError(
+            f"Search API hata: {r.status_code} — {r.text[:200]}"
+        )
+
     return r.json() or {}
 
 def _show_many(subdomain: str, headers: Dict[str, str], ids: List[int]) -> List[dict]:
@@ -130,34 +147,78 @@ def _show_many(subdomain: str, headers: Dict[str, str], ids: List[int]) -> List[
         out.extend((r.json() or {}).get("tickets") or [])
     return out
 
-def search_fetch_window(subdomain: str, headers: Dict[str, str], start_ts: int, end_ts: int,
-                        brand_id: Optional[int] = None, per_page: int = 100,
-                        mode: str = "both", debug: bool = True) -> List[dict]:
-    """
-    Zendesk Search API ile verilen zaman penceresinde ticket id'leri topla, show_many ile detayları çek.
-    mode: 'created' | 'updated' | 'both'
-    """
-    base = "type:ticket" + (f" brand:{brand_id}" if brand_id else "")
+def search_fetch_window(
+    subdomain: str,
+    headers: Dict[str, str],
+    start_ts: int,
+    end_ts: int,
+    brand_id: Optional[int] = None,
+    per_page: int = 50,
+    mode: str = "both",
+    debug: bool = True
+) -> List[dict]:
+
+    base = "type:ticket" + (
+        f" brand:{brand_id}" if brand_id else ""
+    )
+
     queries = []
-    if mode in ("created", "both"): queries.append(f"{base} {_time_clause(start_ts, end_ts, 'created')}")
-    if mode in ("updated", "both"): queries.append(f"{base} {_time_clause(start_ts, end_ts, 'updated')}")
+
+    if mode in ("created", "both"):
+        queries.append(
+            f"{base} {_time_clause(start_ts, end_ts, 'created')}"
+        )
+
+    if mode in ("updated", "both"):
+        queries.append(
+            f"{base} {_time_clause(start_ts, end_ts, 'updated')}"
+        )
 
     all_ids: set[int] = set()
+
     for q in queries:
         page = 1
-        if debug: print(f"[search] q={q}")
+
+        if debug:
+            print(f"[search] q={q}")
+
         while True:
-            data = _search_once(subdomain, headers, q, page=page, per_page=per_page)
+
+            data = _search_once(
+                subdomain,
+                headers,
+                q,
+                page=page,
+                per_page=per_page
+            )
+
             res = data.get("results") or []
-            if debug and page == 1: print(f"[search] first page hits={len(res)}")
-            if not res: break
+
+            if debug and page == 1:
+                print(f"[search] first page hits={len(res)}")
+
+            if not res:
+                break
+
             for r in res:
-                _id = r.get("id");  _id and all_ids.add(int(_id))
-            if not data.get("next_page"): break
+                _id = r.get("id")
+
+                if _id:
+                    all_ids.add(int(_id))
+
+            if not data.get("next_page"):
+                break
+
             page += 1
+
     ids = sorted(all_ids)
-    if debug: print(f"[search] total unique ids={len(ids)}")
-    if not ids: return []
+
+    if debug:
+        print(f"[search] total unique ids={len(ids)}")
+
+    if not ids:
+        return []
+
     return _show_many(subdomain, headers, ids)
 
 
@@ -167,33 +228,89 @@ def _search_is_response_too_large(err_text: str) -> bool:
     t = (err_text or "").lower()
     return "requested response size" in t and "search response limits" in t
 
-def search_fetch_window_safe(subdomain: str, headers: Dict[str, str],
-                             start_ts: int, end_ts: int,
-                             brand_id: Optional[int] = None,
-                             per_page: int = 100, mode: str = "both",
-                             debug: bool = True) -> List[dict]:
-    """Search API: 422 'response too large' gelirse aralığı günlere bölerek dener; olmazsa []."""
+def search_fetch_window_safe(
+    subdomain: str,
+    headers: Dict[str, str],
+    start_ts: int,
+    end_ts: int,
+    brand_id: Optional[int] = None,
+    per_page: int = 50,
+    mode: str = "both",
+    debug: bool = True
+) -> List[dict]:
+
     try:
-        return search_fetch_window(subdomain, headers, start_ts, end_ts, brand_id, per_page, mode, debug)
+        return search_fetch_window(
+            subdomain,
+            headers,
+            start_ts,
+            end_ts,
+            brand_id,
+            per_page,
+            mode,
+            debug
+        )
+
     except RuntimeError as e:
+
         msg = str(e)
+
         if _search_is_response_too_large(msg):
-            if debug: print("[search-safe] response too large -> chunk by day")
+
+            if debug:
+                print("[search-safe] response too large -> chunk by day")
+
             out: Dict[int, dict] = {}
+
             cur = start_ts
-            one_day = 24*3600
+            one_day = 24 * 3600
+
             while cur <= end_ts:
-                day_end = min(end_ts, cur + one_day - 1)
+
+                day_end = min(
+                    end_ts,
+                    cur + one_day - 1
+                )
+
                 try:
-                    items = search_fetch_window(subdomain, headers, cur, day_end, brand_id, per_page, mode, debug)
-                    for t in items: out[int(t["id"])] = t
+                    items = search_fetch_window(
+                        subdomain,
+                        headers,
+                        cur,
+                        day_end,
+                        brand_id,
+                        per_page,
+                        mode,
+                        debug
+                    )
+
+                    for t in items:
+                        out[int(t["id"])] = t
+
                 except RuntimeError as e2:
-                    if debug: print(f"[search-safe] skip {_utc_iso(cur)}..{_utc_iso(day_end)}: {e2}")
+
+                    if debug:
+                        print(
+                            f"[search-safe] skip "
+                            f"{_utc_iso(cur)}..{_utc_iso(day_end)}: {e2}"
+                        )
+
                     time.sleep(0.4)
+
                 cur = day_end + 1
-            if debug: print(f"[search-safe] chunked unique ids={len(out)}")
+
+            if debug:
+                print(
+                    f"[search-safe] chunked unique ids={len(out)}"
+                )
+
             return list(out.values())
-        if debug: print(f"[search-safe] giving up search due to: {msg}")
+
+        if debug:
+            print(
+                f"[search-safe] giving up search due to: {msg}"
+            )
+
         return []
 
 # ===========================================
