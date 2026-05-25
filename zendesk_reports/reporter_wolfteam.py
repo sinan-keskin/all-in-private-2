@@ -284,31 +284,48 @@ def main():
 
     # -------- Veri toplama / sayım --------
     if report_type == "MONTHLY":
-        # 220k+ için streaming sayım (RAM dostu, hızlı)
         counts = incremental_count_parallel(
             subdomain=subdomain, headers=headers,
             start_ts=start_ts, end_ts=end_ts,
             brand_id=brand_id, form_map=FORM_MAP,
             chunk_days=1, workers=16, debug=True
         )
-        # NOT: incremental_count_parallel ticket detaylarını dönmüyorsa
-        # bu ayki memnuniyet oranı hesaplanamaz; o yüzden csat None kalacak.
+
     else:
-        tickets = search_fetch_window(
-            subdomain, headers, start_ts, end_ts,
-            brand_id=brand_id, mode="both", debug=True
-        )
-        if not tickets:
+        tickets = []
+
+        # 1) Önce normal search dene
+        try:
             tickets = search_fetch_window(
                 subdomain, headers, start_ts, end_ts,
-                brand_id=brand_id, mode="created", debug=True
+                brand_id=brand_id, mode="both", debug=True
             )
+        except Exception as e:
+            print("Primary search failed, fallback'e geçiliyor:", repr(e))
+
+        # 2) Olmazsa sadece created araması dene
+        if not tickets:
+            try:
+                tickets = search_fetch_window(
+                    subdomain, headers, start_ts, end_ts,
+                    brand_id=brand_id, mode="created", debug=True
+                )
+            except Exception as e:
+                print("Created search failed, incremental fallback'e geçiliyor:", repr(e))
+
+        # 3) Search API yine patlarsa incremental fallback
         if not tickets:
             tickets = incremental_fetch_parallel(
-                subdomain=subdomain, headers=headers,
-                start_ts=start_ts, end_ts=end_ts,
-                brand_id=brand_id, chunk_days=3, workers=8, debug=True
+                subdomain=subdomain,
+                headers=headers,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                brand_id=brand_id,
+                chunk_days=3,
+                workers=8,
+                debug=True
             )
+
         counts = count_by_category(tickets, FORM_MAP)
 
     title = TITLE.get(report_type, "📊 Wolfteam Zendesk Raporu")
