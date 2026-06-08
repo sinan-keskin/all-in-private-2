@@ -2,7 +2,7 @@ name: Zula PC Zendesk Report (Monthly)
 
 on:
   schedule:
-    - cron: "10 3 1 * *"  # Ayın 1'i 03:10 UTC = TR 06:10
+    - cron: "10 0 1 * *"  # Ayın 1'i 00:10 UTC = TR 03:10
   workflow_dispatch:
 
 concurrency:
