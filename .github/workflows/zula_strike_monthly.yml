@@ -2,7 +2,7 @@ name: Zula Strike Zendesk Report (Monthly)
 
 on:
   schedule:
-    - cron: "10 5 1 * *"  # 05:10 UTC = 08:10 TR (ayın 1'i)
+    - cron: "10 0 1 * *"  # Ayın 1'i 00:10 UTC = TR 03:10
   workflow_dispatch:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
